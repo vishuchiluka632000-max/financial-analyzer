@@ -1,58 +1,44 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import numpy as np
 
-st.set_page_config(
-    page_title="Financial Analyzer Pro",
-    layout="wide"
-)
+st.set_page_config(page_title="Stock Analyzer Pro", layout="wide")
 
-# ---------- HERO SECTION ----------
+# ---------- UI STYLE ----------
 
 st.markdown("""
 <style>
-.hero {
-    background: linear-gradient(135deg,#0f2027,#203a43,#2c5364);
-    padding:60px;
-    border-radius:20px;
-    color:white;
-    text-align:center;
-    margin-bottom:40px;
+.hero{
+background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
+padding:50px;border-radius:18px;color:white;text-align:center;margin-bottom:40px;
 }
-.card {
-    background:#1e1e1e;
-    padding:25px;
-    border-radius:16px;
-}
+.card{background:#1e1e1e;padding:22px;border-radius:16px;margin-bottom:15px}
+.metric{font-size:22px;font-weight:bold}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="hero">
-<h1>📈 Financial Analyzer Pro</h1>
-<p>Upload Screener Excel • Get insights • Track growth • Predict future</p>
+<h1>📊 Stock Financial Analyzer Pro</h1>
+<p>Upload Screener Excel → Analyze like a Pro Investor</p>
 </div>
 """, unsafe_allow_html=True)
 
-# ---------- FILE UPLOAD ----------
+# ---------- UPLOAD ----------
 
-st.subheader("📤 Upload Screener Financial Excel")
+uploaded = st.file_uploader("📤 Upload Screener Excel file", type=["xlsx"])
 
-uploaded = st.file_uploader(
-    "Drop Excel file here",
-    type=["xlsx"]
-)
+# ---------- CLEAN SCREENER DATA ----------
 
-def clean_screener_excel(file):
+def clean_excel(file):
     raw = pd.read_excel(file, header=None)
 
     header_row = None
-
     for i in range(len(raw)):
         row = raw.iloc[i].dropna().astype(str)
         text = " ".join(row.values)
-
-        if any(year in text for year in ["2019", "2020", "2021", "2022", "2023", "2024"]):
+        if any(y in text for y in ["2019","2020","2021","2022","2023","2024"]):
             header_row = i
             break
 
@@ -60,52 +46,141 @@ def clean_screener_excel(file):
         return None
 
     df = pd.read_excel(file, header=header_row)
-
     df = df.loc[:, ~df.columns.astype(str).str.contains("Unnamed")]
     df = df.dropna(how="all")
-
     return df
+
+# ---------- RATIO ENGINE ----------
+
+def find_row(df, keyword):
+    for i in range(len(df)):
+        if keyword.lower() in str(df.iloc[i,0]).lower():
+            return df.iloc[i,1:]
+    return None
+
+def safe(v):
+    return v.astype(float)
+
+# ---------- MAIN ----------
 
 if uploaded:
     st.success("File uploaded successfully")
 
-    df = clean_screener_excel(uploaded)
+    df = clean_excel(uploaded)
 
     if df is None:
-        st.error("Could not auto-detect financial table. Try another Screener file.")
+        st.error("Could not read this Screener file format.")
+        st.stop()
+
+    years = df.columns[1:]
+
+    revenue = safe(find_row(df,"sales") or find_row(df,"revenue"))
+    profit = safe(find_row(df,"net profit"))
+    equity = safe(find_row(df,"reserves") or find_row(df,"equity"))
+    debt = safe(find_row(df,"borrowings"))
+    assets = safe(find_row(df,"total assets"))
+
+    # ---------- RATIOS ----------
+
+    profit_margin = (profit / revenue * 100).iloc[-1]
+    roe = (profit / equity * 100).iloc[-1]
+    debt_equity = (debt / equity).iloc[-1]
+    growth = ((revenue.iloc[-1] / revenue.iloc[0]) ** (1/len(revenue)) - 1) * 100
+
+    # ---------- DASHBOARD ----------
+
+    c1,c2,c3,c4 = st.columns(4)
+
+    c1.metric("Profit Margin %", round(profit_margin,2))
+    c2.metric("ROE %", round(roe,2))
+    c3.metric("Debt/Equity", round(debt_equity,2))
+    c4.metric("Revenue CAGR %", round(growth,2))
+
+    # ---------- CHARTS ----------
+
+    st.subheader("📈 Financial Trends")
+
+    def plot(series, name):
+        fig = px.line(x=years, y=series.values, labels={"x":"Year","y":name},
+                      template="plotly_dark", markers=True)
+        st.plotly_chart(fig, use_container_width=True)
+
+    plot(revenue,"Revenue")
+    plot(profit,"Profit")
+    plot(debt,"Debt")
+    plot(equity,"Equity")
+
+    # ---------- BEGINNER EXPLANATIONS ----------
+
+    st.subheader("📚 Ratio Explanation")
+
+    st.info(f"""
+Profit Margin {round(profit_margin,2)}% → Out of ₹100 sales, company keeps ₹{round(profit_margin,2)} as profit.
+
+ROE {round(roe,2)}% → Every ₹100 shareholder money generates ₹{round(roe,2)} profit.
+
+Debt/Equity {round(debt_equity,2)} → Company uses ₹{round(debt_equity,2)} debt per ₹1 own capital.
+""")
+
+    # ---------- AUTO SUMMARY ----------
+
+    st.subheader("🧠 Business Health Summary")
+
+    positives = []
+    risks = []
+
+    if profit_margin > 15:
+        positives.append("Strong profit margins")
     else:
-        col1, col2 = st.columns([1.2, 1])
+        risks.append("Low margins")
 
-        with col1:
-            st.markdown("<div class='card'>", unsafe_allow_html=True)
-            st.subheader("📄 Clean Financial Data")
-            st.dataframe(df, height=400)
-            st.markdown("</div>", unsafe_allow_html=True)
+    if roe > 20:
+        positives.append("Excellent ROE (efficient business)")
+    else:
+        risks.append("Weak ROE")
 
-        with col2:
-            st.markdown("<div class='card'>", unsafe_allow_html=True)
-            st.subheader("📊 Growth Charts")
+    if debt_equity < 0.5:
+        positives.append("Low debt risk")
+    else:
+        risks.append("High debt burden")
 
-            metric_col = df.columns[0]
-            numeric_cols = df.columns[1:]
+    if growth > 10:
+        positives.append("Good revenue growth")
+    else:
+        risks.append("Slow growth")
 
-            selected = st.selectbox("Select Metric", numeric_cols)
+    for p in positives:
+        st.success("✅ " + p)
 
-            chart_data = df[[metric_col, selected]].dropna()
-            chart_data.columns = ["Year", "Value"]
+    for r in risks:
+        st.error("⚠ " + r)
 
-            fig = px.line(
-                chart_data,
-                x="Year",
-                y="Value",
-                markers=True,
-                template="plotly_dark"
-            )
+    # ---------- VERDICT ----------
 
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+    score = 0
+    if profit_margin>15: score+=25
+    if roe>20: score+=25
+    if debt_equity<0.5: score+=25
+    if growth>10: score+=25
+
+    st.subheader("📊 Stock Health Score")
+
+    st.progress(score/100)
+    st.metric("Score", f"{score}/100")
+
+    if score>=75:
+        st.success("STRONG COMPANY – Long term potential")
+    elif score>=50:
+        st.warning("AVERAGE – Needs monitoring")
+    else:
+        st.error("RISKY – Financial weakness")
+
+    # ---------- RAW DATA ----------
+
+    with st.expander("📄 View Clean Financial Table"):
+        st.dataframe(df)
 
 # ---------- FOOTER ----------
 
 st.markdown("---")
-st.caption("Built with Streamlit • Financial analytics simplified")
+st.caption("Inspired by Screener • Built with Streamlit")
