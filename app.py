@@ -4,37 +4,29 @@ from PIL import Image
 
 st.set_page_config(page_title="Financial Analyzer Pro", layout="wide")
 
-st.image(
-    "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c",
-    use_column_width=True
-)
-
 st.title("📊 Financial Analyzer Pro")
 
-left, right = st.columns(2)
+st.write("Upload Screener Excel file (financial statements)")
 
-with left:
-    st.subheader("Upload Financial Data")
-    uploaded = st.file_uploader(
-        "Upload Excel, CSV, PDF or Screenshot",
-        type=["xlsx", "csv", "pdf", "png", "jpg"]
-    )
+uploaded = st.file_uploader(
+    "Upload Excel file",
+    type=["xlsx"]
+)
 
-with right:
-    st.subheader("Manual Input (optional)")
-    revenue = st.number_input("Latest Revenue", 0.0)
-    profit = st.number_input("Latest Profit", 0.0)
-    cashflow = st.number_input("Latest Cashflow", 0.0)
+def clean_screener_excel(file):
+    # Read raw without headers
+    raw = pd.read_excel(file, header=None)
 
-if uploaded:
-    st.success("File uploaded successfully!")
+    # Find row where years start (contains 20xx)
+    header_row = None
+    for i in range(len(raw)):
+        if raw.iloc[i].astype(str).str.contains("20").any():
+            header_row = i
+            break
 
-    if uploaded.name.endswith(("xlsx","csv")):
-        df = pd.read_excel(uploaded) if uploaded.name.endswith("xlsx") else pd.read_csv(uploaded)
-        st.dataframe(df)
+    if header_row is None:
+        return None
 
-    if uploaded.name.endswith(("png","jpg")):
-        img = Image.open(uploaded)
-        st.image(img, caption="Uploaded Screenshot")
+    df = pd.read_excel(file, header=header_row)
 
-st.button("Analyze Company")
+    # Remove ju
