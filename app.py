@@ -3,184 +3,154 @@ import pandas as pd
 import plotly.express as px
 import numpy as np
 
-st.set_page_config(page_title="Stock Analyzer Pro", layout="wide")
+st.set_page_config("Stock Analyzer Pro", layout="wide")
 
-# ---------- UI STYLE ----------
+# ---------------- UI ----------------
 
 st.markdown("""
 <style>
-.hero{
-background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
-padding:50px;border-radius:18px;color:white;text-align:center;margin-bottom:40px;
-}
-.card{background:#1e1e1e;padding:22px;border-radius:16px;margin-bottom:15px}
-.metric{font-size:22px;font-weight:bold}
+.hero{background:linear-gradient(135deg,#141e30,#243b55);
+padding:50px;border-radius:18px;color:white;text-align:center}
+.box{background:#1f2933;padding:18px;border-radius:15px;margin:10px}
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("""
-<div class="hero">
-<h1>📊 Stock Financial Analyzer Pro</h1>
-<p>Upload Screener Excel → Analyze like a Pro Investor</p>
-</div>
-""", unsafe_allow_html=True)
+st.markdown('<div class="hero"><h1>📊 Stock Analyzer Pro</h1><p>Screener Excel → Smart Analysis</p></div>', unsafe_allow_html=True)
 
-# ---------- UPLOAD ----------
+uploaded = st.file_uploader("Upload Screener Excel", type="xlsx")
 
-uploaded = st.file_uploader("📤 Upload Screener Excel file", type=["xlsx"])
+# ---------------- CLEAN DATA ----------------
 
-# ---------- CLEAN SCREENER DATA ----------
-
-def clean_excel(file):
+def load_clean(file):
     raw = pd.read_excel(file, header=None)
 
-    header_row = None
+    header = None
     for i in range(len(raw)):
-        row = raw.iloc[i].dropna().astype(str)
-        text = " ".join(row.values)
-        if any(y in text for y in ["2019","2020","2021","2022","2023","2024"]):
-            header_row = i
+        if raw.iloc[i].astype(str).str.contains("202").any():
+            header = i
             break
 
-    if header_row is None:
+    if header is None:
         return None
 
-    df = pd.read_excel(file, header=header_row)
+    df = pd.read_excel(file, header=header)
     df = df.loc[:, ~df.columns.astype(str).str.contains("Unnamed")]
-    df = df.dropna(how="all")
+    df.dropna(how="all", inplace=True)
     return df
 
-# ---------- RATIO ENGINE ----------
-
-def find_row(df, keyword):
+def fetch(df, keyword):
     for i in range(len(df)):
         if keyword.lower() in str(df.iloc[i,0]).lower():
-            return df.iloc[i,1:]
+            return pd.to_numeric(df.iloc[i,1:], errors="coerce")
     return None
 
-def safe(v):
-    return v.astype(float)
-
-# ---------- MAIN ----------
+# ---------------- MAIN ----------------
 
 if uploaded:
-    st.success("File uploaded successfully")
 
-    df = clean_excel(uploaded)
+    st.success("Excel loaded successfully")
+
+    df = load_clean(uploaded)
 
     if df is None:
-        st.error("Could not read this Screener file format.")
+        st.error("Invalid Screener file format")
         st.stop()
 
     years = df.columns[1:]
 
-    revenue = safe(find_row(df,"sales") or find_row(df,"revenue"))
-    profit = safe(find_row(df,"net profit"))
-    equity = safe(find_row(df,"reserves") or find_row(df,"equity"))
-    debt = safe(find_row(df,"borrowings"))
-    assets = safe(find_row(df,"total assets"))
+    revenue = fetch(df,"sales")
+    profit = fetch(df,"net profit")
+    equity = fetch(df,"reserves")
+    debt = fetch(df,"borrowings")
 
-    # ---------- RATIOS ----------
+    if revenue is None or profit is None:
+        st.error("Essential financial rows missing in file")
+        st.stop()
 
-    profit_margin = (profit / revenue * 100).iloc[-1]
-    roe = (profit / equity * 100).iloc[-1]
-    debt_equity = (debt / equity).iloc[-1]
-    growth = ((revenue.iloc[-1] / revenue.iloc[0]) ** (1/len(revenue)) - 1) * 100
+    equity = equity if equity is not None else revenue*0
+    debt = debt if debt is not None else revenue*0
 
-    # ---------- DASHBOARD ----------
+    # ---------------- RATIOS ----------------
+
+    profit_margin = (profit.iloc[-1]/revenue.iloc[-1])*100
+    roe = (profit.iloc[-1]/equity.iloc[-1])*100 if equity.iloc[-1]!=0 else 0
+    debt_equity = debt.iloc[-1]/equity.iloc[-1] if equity.iloc[-1]!=0 else 0
+
+    growth = ((revenue.iloc[-1]/revenue.iloc[0])**(1/len(revenue))-1)*100
 
     c1,c2,c3,c4 = st.columns(4)
+    c1.metric("Profit Margin %",round(profit_margin,2))
+    c2.metric("ROE %",round(roe,2))
+    c3.metric("Debt/Equity",round(debt_equity,2))
+    c4.metric("Revenue Growth %",round(growth,2))
 
-    c1.metric("Profit Margin %", round(profit_margin,2))
-    c2.metric("ROE %", round(roe,2))
-    c3.metric("Debt/Equity", round(debt_equity,2))
-    c4.metric("Revenue CAGR %", round(growth,2))
+    # ---------------- CHARTS ----------------
 
-    # ---------- CHARTS ----------
-
-    st.subheader("📈 Financial Trends")
-
-    def plot(series, name):
-        fig = px.line(x=years, y=series.values, labels={"x":"Year","y":name},
-                      template="plotly_dark", markers=True)
+    def chart(series,title):
+        fig = px.line(x=years, y=series, markers=True,
+                      labels={"x":"Year","y":title},
+                      template="plotly_dark")
         st.plotly_chart(fig, use_container_width=True)
 
-    plot(revenue,"Revenue")
-    plot(profit,"Profit")
-    plot(debt,"Debt")
-    plot(equity,"Equity")
+    st.subheader("📈 Performance Trends")
 
-    # ---------- BEGINNER EXPLANATIONS ----------
+    chart(revenue,"Revenue")
+    chart(profit,"Profit")
+    chart(debt,"Debt")
+    chart(equity,"Equity")
 
-    st.subheader("📚 Ratio Explanation")
+    # ---------------- EDUCATION ----------------
+
+    st.subheader("📚 Ratio Meaning (Beginner Friendly)")
 
     st.info(f"""
-Profit Margin {round(profit_margin,2)}% → Out of ₹100 sales, company keeps ₹{round(profit_margin,2)} as profit.
+Profit Margin {round(profit_margin,2)}% → Company keeps ₹{round(profit_margin,2)} profit on every ₹100 sales
 
-ROE {round(roe,2)}% → Every ₹100 shareholder money generates ₹{round(roe,2)} profit.
+ROE {round(roe,2)}% → Shareholder money earns {round(roe,2)}% return
 
-Debt/Equity {round(debt_equity,2)} → Company uses ₹{round(debt_equity,2)} debt per ₹1 own capital.
+Debt/Equity {round(debt_equity,2)} → Debt risk level (below 0.5 is healthy)
 """)
 
-    # ---------- AUTO SUMMARY ----------
+    # ---------------- HEALTH ----------------
 
-    st.subheader("🧠 Business Health Summary")
+    st.subheader("🧠 Company Strength")
 
-    positives = []
-    risks = []
+    good = []
+    bad = []
 
-    if profit_margin > 15:
-        positives.append("Strong profit margins")
-    else:
-        risks.append("Low margins")
+    if profit_margin>15: good.append("High profitability")
+    else: bad.append("Low profit margin")
 
-    if roe > 20:
-        positives.append("Excellent ROE (efficient business)")
-    else:
-        risks.append("Weak ROE")
+    if roe>20: good.append("Strong return on capital")
+    else: bad.append("Weak ROE")
 
-    if debt_equity < 0.5:
-        positives.append("Low debt risk")
-    else:
-        risks.append("High debt burden")
+    if debt_equity<0.5: good.append("Low debt risk")
+    else: bad.append("High debt")
 
-    if growth > 10:
-        positives.append("Good revenue growth")
-    else:
-        risks.append("Slow growth")
+    if growth>10: good.append("Growing business")
+    else: bad.append("Slow growth")
 
-    for p in positives:
-        st.success("✅ " + p)
+    for g in good: st.success("✅ "+g)
+    for b in bad: st.error("⚠ "+b)
 
-    for r in risks:
-        st.error("⚠ " + r)
-
-    # ---------- VERDICT ----------
-
-    score = 0
-    if profit_margin>15: score+=25
-    if roe>20: score+=25
-    if debt_equity<0.5: score+=25
-    if growth>10: score+=25
-
-    st.subheader("📊 Stock Health Score")
+    score = sum([
+        profit_margin>15,
+        roe>20,
+        debt_equity<0.5,
+        growth>10
+    ])*25
 
     st.progress(score/100)
-    st.metric("Score", f"{score}/100")
+    st.metric("Stock Score",f"{score}/100")
 
     if score>=75:
-        st.success("STRONG COMPANY – Long term potential")
+        st.success("Excellent Long-Term Stock")
     elif score>=50:
-        st.warning("AVERAGE – Needs monitoring")
+        st.warning("Average – Monitor Carefully")
     else:
-        st.error("RISKY – Financial weakness")
+        st.error("Financially Weak")
 
-    # ---------- RAW DATA ----------
-
-    with st.expander("📄 View Clean Financial Table"):
+    with st.expander("View Clean Financial Table"):
         st.dataframe(df)
 
-# ---------- FOOTER ----------
-
-st.markdown("---")
-st.caption("Inspired by Screener • Built with Streamlit")
+st.caption("Inspired by Screener.in | Built with Streamlit")
