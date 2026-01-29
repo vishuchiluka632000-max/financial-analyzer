@@ -1,67 +1,40 @@
 import streamlit as st
+import pandas as pd
+from PIL import Image
 
-st.title("📊 Multi-Year Financial Analyzer")
+st.set_page_config(page_title="Financial Analyzer Pro", layout="wide")
 
-st.write("Enter last 5 years financial data (in Crores)")
+st.image(
+    "https://images.unsplash.com/photo-1554224155-8d04cb21cd6c",
+    use_column_width=True
+)
 
-revenue = [
-    st.number_input("Revenue Year 1", value=356),
-    st.number_input("Revenue Year 2", value=484),
-    st.number_input("Revenue Year 3", value=474),
-    st.number_input("Revenue Year 4", value=550),
-    st.number_input("Revenue Year 5", value=657)
-]
+st.title("📊 Financial Analyzer Pro")
 
-profit = [
-    st.number_input("Profit Year 1", value=205),
-    st.number_input("Profit Year 2", value=308),
-    st.number_input("Profit Year 3", value=305),
-    st.number_input("Profit Year 4", value=350),
-    st.number_input("Profit Year 5", value=429)
-]
+left, right = st.columns(2)
 
-cashflow = [
-    st.number_input("Cashflow Year 1", value=306),
-    st.number_input("Cashflow Year 2", value=762),
-    st.number_input("Cashflow Year 3", value=-22),
-    st.number_input("Cashflow Year 4", value=298),
-    st.number_input("Cashflow Year 5", value=427)
-]
+with left:
+    st.subheader("Upload Financial Data")
+    uploaded = st.file_uploader(
+        "Upload Excel, CSV, PDF or Screenshot",
+        type=["xlsx", "csv", "pdf", "png", "jpg"]
+    )
 
-current_assets = st.number_input("Current Assets (Latest)", value=1584)
-current_liabilities = st.number_input("Current Liabilities (Latest)", value=1007)
+with right:
+    st.subheader("Manual Input (optional)")
+    revenue = st.number_input("Latest Revenue", 0.0)
+    profit = st.number_input("Latest Profit", 0.0)
+    cashflow = st.number_input("Latest Cashflow", 0.0)
 
-liabilities = st.number_input("Total Liabilities (Latest)", value=1060)
-equity = st.number_input("Equity (Latest)", value=1136)
+if uploaded:
+    st.success("File uploaded successfully!")
 
-if st.button("Analyze Company"):
+    if uploaded.name.endswith(("xlsx","csv")):
+        df = pd.read_excel(uploaded) if uploaded.name.endswith("xlsx") else pd.read_csv(uploaded)
+        st.dataframe(df)
 
-    rev_growth = ((revenue[-1] - revenue[0]) / revenue[0]) * 100
-    profit_growth = ((profit[-1] - profit[0]) / profit[0]) * 100
+    if uploaded.name.endswith(("png","jpg")):
+        img = Image.open(uploaded)
+        st.image(img, caption="Uploaded Screenshot")
 
-    profit_margin = profit[-1] / revenue[-1] * 100
-    current_ratio = current_assets / current_liabilities
-    debt_equity = liabilities / equity
-    cash_quality = cashflow[-1] / profit[-1]
-
-    growth_rate = (rev_growth + profit_growth) / 200
-    intrinsic_value = cashflow[-1] * (1 + growth_rate) / 0.12
-
-    score = 0
-    if rev_growth > 20: score += 2
-    if profit_growth > 20: score += 20
-    if profit_margin > 15: score += 20
-    if current_ratio > 1.3: score += 20
-    if debt_equity < 0.5: score += 20
-
-    st.subheader("Results")
-
-    st.write("Revenue Growth:", round(rev_growth,2), "%")
-    st.write("Profit Growth:", round(profit_growth,2), "%")
-    st.write("Profit Margin:", round(profit_margin,2), "%")
-    st.write("Current Ratio:", round(current_ratio,2))
-    st.write("Debt/Equity:", round(debt_equity,2))
-    st.write("Cash Quality:", round(cash_quality,2))
-    st.write("Intrinsic Value:", round(intrinsic_value,2), "Crore")
-
-    st.subheader(f"Score: {score}/100")
+st.button("Analyze Company")
