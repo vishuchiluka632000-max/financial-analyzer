@@ -2,34 +2,33 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
+import yfinance as yf
 import requests
-import openai
+import google.generativeai as genai
 
 # ---------------- CONFIG ----------------
 
 st.set_page_config("Stock Analyzer Pro AI", layout="wide")
 
-NEWS_API_KEY = "YOUR_NEWSAPI_KEY"   # https://newsapi.org
-OPENAI_KEY = "YOUR_OPENAI_KEY"     # https://platform.openai.com
+GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
+genai.configure(api_key=GEMINI_API_KEY)
 
-openai.api_key = OPENAI_KEY
+model = genai.GenerativeModel("gemini-pro")
 
 # ---------------- UI STYLE ----------------
 
 st.markdown("""
 <style>
-.hero{
-background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
-padding:40px;border-radius:18px;color:white;text-align:center}
-.card{background:#1f2933;padding:20px;border-radius:15px;margin:10px}
-.small{color:#9ca3af}
+.hero{background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
+padding:40px;border-radius:20px;color:white;text-align:center}
+.card{background:#1f2933;padding:20px;border-radius:15px;margin:8px}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="hero">
 <h1>📊 Stock Analyzer Pro AI</h1>
-<p>Financial Analysis + News + AI Assistant</p>
+<p>Live Markets • AI Insights • Pro Financial Dashboard</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -38,179 +37,170 @@ st.markdown("""
 st.sidebar.title("⚙ Controls")
 uploaded = st.sidebar.file_uploader("Upload Screener Excel", type="xlsx")
 
-show_news = st.sidebar.checkbox("Show Latest News", True)
-show_ai = st.sidebar.checkbox("Enable AI Assistant", True)
+symbol = st.sidebar.text_input("Track Stock (NSE/BSE/US)", "AAPL")
 
-# ---------------- FUNCTIONS ----------------
+# ---------------- DATA CLEAN ----------------
 
 def load_clean(file):
     raw = pd.read_excel(file, header=None)
-    header = None
-
+    header=None
     for i in range(len(raw)):
         if raw.iloc[i].astype(str).str.contains("202").any():
-            header = i
+            header=i
             break
-
     if header is None:
         return None
 
-    df = pd.read_excel(file, header=header)
-    df = df.loc[:, ~df.columns.astype(str).str.contains("Unnamed")]
-    df.dropna(how="all", inplace=True)
+    df=pd.read_excel(file,header=header)
+    df=df.loc[:,~df.columns.astype(str).str.contains("Unnamed")]
+    df.dropna(how="all",inplace=True)
     return df
 
-def fetch(df, keyword):
+def fetch(df,key):
     for i in range(len(df)):
-        if keyword.lower() in str(df.iloc[i,0]).lower():
-            return pd.to_numeric(df.iloc[i,1:], errors="coerce")
+        if key.lower() in str(df.iloc[i,0]).lower():
+            return pd.to_numeric(df.iloc[i,1:],errors="coerce")
     return None
 
-def chart(series, years, title):
-    fig = px.line(x=years, y=series, markers=True,
-                  labels={"x":"Year","y":title},
-                  template="plotly_dark")
-    st.plotly_chart(fig, use_container_width=True)
+# ---------------- STOCK PRICE ----------------
 
-# ---------------- NEWS ----------------
+def get_price(symbol):
+    data=yf.Ticker(symbol)
+    hist=data.history(period="1y")
+    return hist
 
-def get_news(query):
-    url = f"https://newsapi.org/v2/everything?q={query}&language=en&sortBy=publishedAt&apiKey={NEWS_API_KEY}"
-    r = requests.get(url).json()
-    return r.get("articles",[])[:5]
+# ---------------- TRENDING ----------------
 
-# ---------------- AI BOT ----------------
+def trending_stocks():
+    tickers=["AAPL","MSFT","GOOGL","AMZN","TSLA","META","NVDA","NFLX","INTC","AMD"]
+    movers=[]
 
-def ask_ai(question, context):
-    prompt = f"""
-You are a stock analysis assistant.
-Financial data:
+    for t in tickers:
+        d=yf.Ticker(t).history(period="5d")
+        if len(d)>1:
+            change=((d["Close"][-1]/d["Close"][0])-1)*100
+            movers.append((t,round(change,2)))
+
+    gainers=sorted(movers,key=lambda x:x[1],reverse=True)[:5]
+    losers=sorted(movers,key=lambda x:x[1])[:5]
+
+    return gainers,losers
+
+# ---------------- AI ----------------
+
+def ai_answer(question,context):
+    prompt=f"""
+You are a professional stock market analyst.
+
+DATA:
 {context}
 
-User question: {question}
-Give simple beginner friendly answer.
+Answer clearly, simply, with investment insight.
 """
+    r=model.generate_content(prompt+"\nUser: "+question)
+    return r.text
 
-    res = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role":"user","content":prompt}]
-    )
-    return res.choices[0].message.content
+# ---------------- MAIN ----------------
 
-# ---------------- MAIN APP ----------------
+tabs = st.tabs(["📈 Dashboard","🔥 Trending","📊 Screener Analysis","🤖 AI Assistant"])
 
-if uploaded:
+# ================= DASHBOARD =================
 
-    df = load_clean(uploaded)
+with tabs[0]:
+    st.subheader("Live Stock Price")
 
-    if df is None:
-        st.error("Invalid Screener file format")
-        st.stop()
+    price=get_price(symbol)
 
-    years = df.columns[1:]
+    fig=px.line(price,x=price.index,y="Close",template="plotly_dark")
+    st.plotly_chart(fig,use_container_width=True)
 
-    revenue = fetch(df,"sales")
-    profit = fetch(df,"net profit")
-    equity = fetch(df,"reserves") or revenue*0
-    debt = fetch(df,"borrowings") or revenue*0
+    latest=price["Close"][-1]
+    change=((price["Close"][-1]/price["Close"][-2])-1)*100
 
-    if revenue is None or profit is None:
-        st.error("Missing Sales or Profit row")
-        st.stop()
+    c1,c2=st.columns(2)
+    c1.metric("Current Price",f"{latest:.2f}")
+    c2.metric("Daily Change",f"{change:.2f}%")
 
-    # -------- RATIOS --------
+# ================= TRENDING =================
 
-    profit_margin = profit.iloc[-1]/revenue.iloc[-1]*100
-    roe = profit.iloc[-1]/equity.iloc[-1]*100 if equity.iloc[-1]!=0 else 0
-    debt_equity = debt.iloc[-1]/equity.iloc[-1] if equity.iloc[-1]!=0 else 0
-    growth = ((revenue.iloc[-1]/revenue.iloc[0])**(1/len(revenue))-1)*100
+with tabs[1]:
+    gainers,losers=trending_stocks()
 
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Profit Margin %",round(profit_margin,2))
-    c2.metric("ROE %",round(roe,2))
-    c3.metric("Debt/Equity",round(debt_equity,2))
-    c4.metric("Revenue Growth %",round(growth,2))
+    col1,col2=st.columns(2)
 
-    # -------- TABS --------
+    with col1:
+        st.subheader("📈 Top Gainers")
+        for g in gainers:
+            st.success(f"{g[0]}  +{g[1]}%")
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["📈 Financials","🧠 Stock Health","📰 News","🤖 AI Assistant"]
-    )
+    with col2:
+        st.subheader("📉 Top Losers")
+        for l in losers:
+            st.error(f"{l[0]}  {l[1]}%")
 
-    # ================= TAB 1 =================
+# ================= SCREENER =================
 
-    with tab1:
-        chart(revenue, years, "Revenue")
-        chart(profit, years, "Profit")
-        chart(debt, years, "Debt")
-        chart(equity, years, "Equity")
+with tabs[2]:
+    if uploaded:
+        df=load_clean(uploaded)
 
-        with st.expander("View Clean Financial Table"):
+        if df is None:
+            st.error("Invalid Screener file")
+        else:
+            years=df.columns[1:]
+
+            revenue=fetch(df,"sales")
+            profit=fetch(df,"net profit")
+            equity=fetch(df,"reserves") or revenue*0
+            debt=fetch(df,"borrowings") or revenue*0
+
+            pm=profit.iloc[-1]/revenue.iloc[-1]*100
+            roe=profit.iloc[-1]/equity.iloc[-1]*100 if equity.iloc[-1]!=0 else 0
+            de=debt.iloc[-1]/equity.iloc[-1] if equity.iloc[-1]!=0 else 0
+            growth=((revenue.iloc[-1]/revenue.iloc[0])**(1/len(revenue))-1)*100
+
+            c1,c2,c3,c4=st.columns(4)
+            c1.metric("Profit Margin %",round(pm,2))
+            c2.metric("ROE %",round(roe,2))
+            c3.metric("Debt/Equity",round(de,2))
+            c4.metric("Revenue Growth %",round(growth,2))
+
+            st.plotly_chart(px.line(x=years,y=revenue,markers=True,template="plotly_dark",
+                                    labels={"x":"Year","y":"Revenue"}),use_container_width=True)
+
+            st.plotly_chart(px.line(x=years,y=profit,markers=True,template="plotly_dark",
+                                    labels={"x":"Year","y":"Profit"}),use_container_width=True)
+
             st.dataframe(df)
 
-    # ================= TAB 2 =================
+    else:
+        st.info("Upload Screener Excel to analyze")
 
-    with tab2:
-        good,bad=[],[]
+# ================= AI =================
 
-        if profit_margin>15: good.append("High profitability")
-        else: bad.append("Low margins")
+with tabs[3]:
+    st.subheader("🤖 StockGPT – Your AI Market Assistant")
 
-        if roe>20: good.append("Strong ROE")
-        else: bad.append("Weak ROE")
+    q=st.text_input("Ask about stock, trend, risk, valuation, future")
 
-        if debt_equity<0.5: good.append("Low debt")
-        else: bad.append("High debt")
+    if q:
+        context=f"""
+Symbol: {symbol}
+Latest price: {latest:.2f}
+Daily change: {change:.2f}%
+"""
 
-        if growth>10: good.append("Strong growth")
-        else: bad.append("Slow growth")
-
-        for g in good: st.success("✅ "+g)
-        for b in bad: st.error("⚠ "+b)
-
-        score = sum([
-            profit_margin>15,
-            roe>20,
-            debt_equity<0.5,
-            growth>10
-        ])*25
-
-        st.progress(score/100)
-        st.metric("Stock Score",f"{score}/100")
-
-    # ================= TAB 3 =================
-
-    with tab3:
-        if show_news:
-            st.subheader("🌍 Latest Global + Indian Market News")
-
-            news = get_news("stock market india global economy")
-
-            for n in news:
-                st.markdown(f"### {n['title']}")
-                st.write(n['description'])
-                st.caption(n['source']['name'])
-                st.divider()
-
-    # ================= TAB 4 =================
-
-    with tab4:
-        if show_ai:
-            st.subheader("🤖 Ask AI About This Stock")
-
-            question = st.text_input("Ask anything (risk, future, health etc)")
-
-            if question:
-                context = f"""
-Revenue latest: {revenue.iloc[-1]}
-Profit latest: {profit.iloc[-1]}
+        if uploaded:
+            context+=f"""
+Profit margin: {pm:.2f}%
 ROE: {roe:.2f}%
-Debt Equity: {debt_equity:.2f}
+Debt Equity: {de:.2f}
 Growth: {growth:.2f}%
 """
-                with st.spinner("AI thinking..."):
-                    answer = ask_ai(question, context)
 
-                st.success(answer)
+        with st.spinner("AI analyzing..."):
+            ans=ai_answer(q,context)
 
-st.caption("📌 AI Powered Financial Analysis Dashboard")
+        st.success(ans)
+
+st.caption("🚀 Professional Stock Analysis Platform with AI")
