@@ -1,4 +1,6 @@
+streamlit
 pandas
-openpyxl
-pillow
 plotly
+numpy
+requests
+openai==0.28
