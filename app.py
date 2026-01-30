@@ -2,29 +2,51 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
+import requests
+import openai
 
-st.set_page_config("Stock Analyzer Pro", layout="wide")
+# ---------------- CONFIG ----------------
 
-# ---------------- UI ----------------
+st.set_page_config("Stock Analyzer Pro AI", layout="wide")
+
+NEWS_API_KEY = "YOUR_NEWSAPI_KEY"   # https://newsapi.org
+OPENAI_KEY = "YOUR_OPENAI_KEY"     # https://platform.openai.com
+
+openai.api_key = OPENAI_KEY
+
+# ---------------- UI STYLE ----------------
 
 st.markdown("""
 <style>
-.hero{background:linear-gradient(135deg,#141e30,#243b55);
-padding:50px;border-radius:18px;color:white;text-align:center}
-.box{background:#1f2933;padding:18px;border-radius:15px;margin:10px}
+.hero{
+background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
+padding:40px;border-radius:18px;color:white;text-align:center}
+.card{background:#1f2933;padding:20px;border-radius:15px;margin:10px}
+.small{color:#9ca3af}
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="hero"><h1>📊 Stock Analyzer Pro</h1><p>Screener Excel → Smart Analysis</p></div>', unsafe_allow_html=True)
+st.markdown("""
+<div class="hero">
+<h1>📊 Stock Analyzer Pro AI</h1>
+<p>Financial Analysis + News + AI Assistant</p>
+</div>
+""", unsafe_allow_html=True)
 
-uploaded = st.file_uploader("Upload Screener Excel", type="xlsx")
+# ---------------- SIDEBAR ----------------
 
-# ---------------- CLEAN DATA ----------------
+st.sidebar.title("⚙ Controls")
+uploaded = st.sidebar.file_uploader("Upload Screener Excel", type="xlsx")
+
+show_news = st.sidebar.checkbox("Show Latest News", True)
+show_ai = st.sidebar.checkbox("Enable AI Assistant", True)
+
+# ---------------- FUNCTIONS ----------------
 
 def load_clean(file):
     raw = pd.read_excel(file, header=None)
-
     header = None
+
     for i in range(len(raw)):
         if raw.iloc[i].astype(str).str.contains("202").any():
             header = i
@@ -44,11 +66,40 @@ def fetch(df, keyword):
             return pd.to_numeric(df.iloc[i,1:], errors="coerce")
     return None
 
-# ---------------- MAIN ----------------
+def chart(series, years, title):
+    fig = px.line(x=years, y=series, markers=True,
+                  labels={"x":"Year","y":title},
+                  template="plotly_dark")
+    st.plotly_chart(fig, use_container_width=True)
+
+# ---------------- NEWS ----------------
+
+def get_news(query):
+    url = f"https://newsapi.org/v2/everything?q={query}&language=en&sortBy=publishedAt&apiKey={NEWS_API_KEY}"
+    r = requests.get(url).json()
+    return r.get("articles",[])[:5]
+
+# ---------------- AI BOT ----------------
+
+def ask_ai(question, context):
+    prompt = f"""
+You are a stock analysis assistant.
+Financial data:
+{context}
+
+User question: {question}
+Give simple beginner friendly answer.
+"""
+
+    res = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role":"user","content":prompt}]
+    )
+    return res.choices[0].message.content
+
+# ---------------- MAIN APP ----------------
 
 if uploaded:
-
-    st.success("Excel loaded successfully")
 
     df = load_clean(uploaded)
 
@@ -60,22 +111,18 @@ if uploaded:
 
     revenue = fetch(df,"sales")
     profit = fetch(df,"net profit")
-    equity = fetch(df,"reserves")
-    debt = fetch(df,"borrowings")
+    equity = fetch(df,"reserves") or revenue*0
+    debt = fetch(df,"borrowings") or revenue*0
 
     if revenue is None or profit is None:
-        st.error("Essential financial rows missing in file")
+        st.error("Missing Sales or Profit row")
         st.stop()
 
-    equity = equity if equity is not None else revenue*0
-    debt = debt if debt is not None else revenue*0
+    # -------- RATIOS --------
 
-    # ---------------- RATIOS ----------------
-
-    profit_margin = (profit.iloc[-1]/revenue.iloc[-1])*100
-    roe = (profit.iloc[-1]/equity.iloc[-1])*100 if equity.iloc[-1]!=0 else 0
+    profit_margin = profit.iloc[-1]/revenue.iloc[-1]*100
+    roe = profit.iloc[-1]/equity.iloc[-1]*100 if equity.iloc[-1]!=0 else 0
     debt_equity = debt.iloc[-1]/equity.iloc[-1] if equity.iloc[-1]!=0 else 0
-
     growth = ((revenue.iloc[-1]/revenue.iloc[0])**(1/len(revenue))-1)*100
 
     c1,c2,c3,c4 = st.columns(4)
@@ -84,73 +131,86 @@ if uploaded:
     c3.metric("Debt/Equity",round(debt_equity,2))
     c4.metric("Revenue Growth %",round(growth,2))
 
-    # ---------------- CHARTS ----------------
+    # -------- TABS --------
 
-    def chart(series,title):
-        fig = px.line(x=years, y=series, markers=True,
-                      labels={"x":"Year","y":title},
-                      template="plotly_dark")
-        st.plotly_chart(fig, use_container_width=True)
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📈 Financials","🧠 Stock Health","📰 News","🤖 AI Assistant"]
+    )
 
-    st.subheader("📈 Performance Trends")
+    # ================= TAB 1 =================
 
-    chart(revenue,"Revenue")
-    chart(profit,"Profit")
-    chart(debt,"Debt")
-    chart(equity,"Equity")
+    with tab1:
+        chart(revenue, years, "Revenue")
+        chart(profit, years, "Profit")
+        chart(debt, years, "Debt")
+        chart(equity, years, "Equity")
 
-    # ---------------- EDUCATION ----------------
+        with st.expander("View Clean Financial Table"):
+            st.dataframe(df)
 
-    st.subheader("📚 Ratio Meaning (Beginner Friendly)")
+    # ================= TAB 2 =================
 
-    st.info(f"""
-Profit Margin {round(profit_margin,2)}% → Company keeps ₹{round(profit_margin,2)} profit on every ₹100 sales
+    with tab2:
+        good,bad=[],[]
 
-ROE {round(roe,2)}% → Shareholder money earns {round(roe,2)}% return
+        if profit_margin>15: good.append("High profitability")
+        else: bad.append("Low margins")
 
-Debt/Equity {round(debt_equity,2)} → Debt risk level (below 0.5 is healthy)
-""")
+        if roe>20: good.append("Strong ROE")
+        else: bad.append("Weak ROE")
 
-    # ---------------- HEALTH ----------------
+        if debt_equity<0.5: good.append("Low debt")
+        else: bad.append("High debt")
 
-    st.subheader("🧠 Company Strength")
+        if growth>10: good.append("Strong growth")
+        else: bad.append("Slow growth")
 
-    good = []
-    bad = []
+        for g in good: st.success("✅ "+g)
+        for b in bad: st.error("⚠ "+b)
 
-    if profit_margin>15: good.append("High profitability")
-    else: bad.append("Low profit margin")
+        score = sum([
+            profit_margin>15,
+            roe>20,
+            debt_equity<0.5,
+            growth>10
+        ])*25
 
-    if roe>20: good.append("Strong return on capital")
-    else: bad.append("Weak ROE")
+        st.progress(score/100)
+        st.metric("Stock Score",f"{score}/100")
 
-    if debt_equity<0.5: good.append("Low debt risk")
-    else: bad.append("High debt")
+    # ================= TAB 3 =================
 
-    if growth>10: good.append("Growing business")
-    else: bad.append("Slow growth")
+    with tab3:
+        if show_news:
+            st.subheader("🌍 Latest Global + Indian Market News")
 
-    for g in good: st.success("✅ "+g)
-    for b in bad: st.error("⚠ "+b)
+            news = get_news("stock market india global economy")
 
-    score = sum([
-        profit_margin>15,
-        roe>20,
-        debt_equity<0.5,
-        growth>10
-    ])*25
+            for n in news:
+                st.markdown(f"### {n['title']}")
+                st.write(n['description'])
+                st.caption(n['source']['name'])
+                st.divider()
 
-    st.progress(score/100)
-    st.metric("Stock Score",f"{score}/100")
+    # ================= TAB 4 =================
 
-    if score>=75:
-        st.success("Excellent Long-Term Stock")
-    elif score>=50:
-        st.warning("Average – Monitor Carefully")
-    else:
-        st.error("Financially Weak")
+    with tab4:
+        if show_ai:
+            st.subheader("🤖 Ask AI About This Stock")
 
-    with st.expander("View Clean Financial Table"):
-        st.dataframe(df)
+            question = st.text_input("Ask anything (risk, future, health etc)")
 
-st.caption("Inspired by Screener.in | Built with Streamlit")
+            if question:
+                context = f"""
+Revenue latest: {revenue.iloc[-1]}
+Profit latest: {profit.iloc[-1]}
+ROE: {roe:.2f}%
+Debt Equity: {debt_equity:.2f}
+Growth: {growth:.2f}%
+"""
+                with st.spinner("AI thinking..."):
+                    answer = ask_ai(question, context)
+
+                st.success(answer)
+
+st.caption("📌 AI Powered Financial Analysis Dashboard")
