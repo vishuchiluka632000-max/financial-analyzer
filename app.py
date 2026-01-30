@@ -1,9 +1,7 @@
-GEMINI_API_KEY = "YOUR_KEY"
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
-import yfinance as yf
 import requests
 import google.generativeai as genai
 
@@ -11,9 +9,10 @@ import google.generativeai as genai
 
 st.set_page_config("Stock Analyzer Pro AI", layout="wide")
 
-GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
-genai.configure(api_key=GEMINI_API_KEY)
+ALPHA_KEY = "IDN45N3R2QL85M87"   # your stock data API key
+GEMINI_API_KEY = "PASTE_YOUR_GEMINI_KEY_HERE"
 
+genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-pro")
 
 # ---------------- UI STYLE ----------------
@@ -22,14 +21,13 @@ st.markdown("""
 <style>
 .hero{background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);
 padding:40px;border-radius:20px;color:white;text-align:center}
-.card{background:#1f2933;padding:20px;border-radius:15px;margin:8px}
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="hero">
 <h1>📊 Stock Analyzer Pro AI</h1>
-<p>Live Markets • AI Insights • Pro Financial Dashboard</p>
+<p>Live Market • Trending Stocks • AI Assistant</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -37,10 +35,9 @@ st.markdown("""
 
 st.sidebar.title("⚙ Controls")
 uploaded = st.sidebar.file_uploader("Upload Screener Excel", type="xlsx")
+symbol = st.sidebar.text_input("Track Stock (AAPL, MSFT, TSLA etc)", "AAPL")
 
-symbol = st.sidebar.text_input("Track Stock (NSE/BSE/US)", "AAPL")
-
-# ---------------- DATA CLEAN ----------------
+# ---------------- SCREENER CLEAN ----------------
 
 def load_clean(file):
     raw = pd.read_excel(file, header=None)
@@ -63,27 +60,44 @@ def fetch(df,key):
             return pd.to_numeric(df.iloc[i,1:],errors="coerce")
     return None
 
-# ---------------- STOCK PRICE ----------------
+# ---------------- STOCK DATA (NO RATE LIMIT CRASH) ----------------
 
 def get_price(symbol):
-    data=yf.Ticker(symbol)
-    hist=data.history(period="1y")
-    return hist
+    url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={symbol}&apikey={ALPHA_KEY}"
+    r = requests.get(url).json()
+
+    ts = r.get("Time Series (Daily)", {})
+    if not ts:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(ts).T.astype(float)
+    df.index = pd.to_datetime(df.index)
+    df.sort_index(inplace=True)
+
+    df.rename(columns={
+        "1. open":"Open",
+        "2. high":"High",
+        "3. low":"Low",
+        "4. close":"Close",
+        "5. volume":"Volume"
+    }, inplace=True)
+
+    return df.tail(250)
 
 # ---------------- TRENDING ----------------
 
 def trending_stocks():
-    tickers=["AAPL","MSFT","GOOGL","AMZN","TSLA","META","NVDA","NFLX","INTC","AMD"]
-    movers=[]
+    symbols=["AAPL","MSFT","NVDA","TSLA","AMZN","META","GOOGL","NFLX"]
 
-    for t in tickers:
-        d=yf.Ticker(t).history(period="5d")
-        if len(d)>1:
-            change=((d["Close"][-1]/d["Close"][0])-1)*100
-            movers.append((t,round(change,2)))
+    moves=[]
+    for s in symbols:
+        df=get_price(s)
+        if len(df)>1:
+            ch=((df["Close"].iloc[-1]/df["Close"].iloc[-2])-1)*100
+            moves.append((s,round(ch,2)))
 
-    gainers=sorted(movers,key=lambda x:x[1],reverse=True)[:5]
-    losers=sorted(movers,key=lambda x:x[1])[:5]
+    gainers=sorted(moves,key=lambda x:x[1],reverse=True)[:4]
+    losers=sorted(moves,key=lambda x:x[1])[:4]
 
     return gainers,losers
 
@@ -91,53 +105,54 @@ def trending_stocks():
 
 def ai_answer(question,context):
     prompt=f"""
-You are a professional stock market analyst.
+You are a professional stock analyst.
 
 DATA:
 {context}
 
-Answer clearly, simply, with investment insight.
+Explain clearly for beginner + investor.
 """
-    r=model.generate_content(prompt+"\nUser: "+question)
+    r=model.generate_content(prompt+"\nUser question: "+question)
     return r.text
 
-# ---------------- MAIN ----------------
+# ---------------- TABS ----------------
 
-tabs = st.tabs(["📈 Dashboard","🔥 Trending","📊 Screener Analysis","🤖 AI Assistant"])
+tabs = st.tabs(["📈 Live Market","🔥 Trending","📊 Screener","🤖 AI Assistant"])
 
-# ================= DASHBOARD =================
+# ================= LIVE MARKET =================
 
 with tabs[0]:
-    st.subheader("Live Stock Price")
+    dfp=get_price(symbol)
 
-    price=get_price(symbol)
+    if dfp.empty:
+        st.warning("API limit reached – wait 1 minute")
+    else:
+        fig=px.line(dfp,x=dfp.index,y="Close",template="plotly_dark")
+        st.plotly_chart(fig,use_container_width=True)
 
-    fig=px.line(price,x=price.index,y="Close",template="plotly_dark")
-    st.plotly_chart(fig,use_container_width=True)
+        latest=dfp["Close"].iloc[-1]
+        change=((dfp["Close"].iloc[-1]/dfp["Close"].iloc[-2])-1)*100
 
-    latest=price["Close"][-1]
-    change=((price["Close"][-1]/price["Close"][-2])-1)*100
-
-    c1,c2=st.columns(2)
-    c1.metric("Current Price",f"{latest:.2f}")
-    c2.metric("Daily Change",f"{change:.2f}%")
+        c1,c2=st.columns(2)
+        c1.metric("Current Price",f"{latest:.2f}")
+        c2.metric("Daily Change",f"{change:.2f}%")
 
 # ================= TRENDING =================
 
 with tabs[1]:
-    gainers,losers=trending_stocks()
+    g,l=trending_stocks()
 
     col1,col2=st.columns(2)
 
     with col1:
         st.subheader("📈 Top Gainers")
-        for g in gainers:
-            st.success(f"{g[0]}  +{g[1]}%")
+        for s in g:
+            st.success(f"{s[0]}  +{s[1]}%")
 
     with col2:
         st.subheader("📉 Top Losers")
-        for l in losers:
-            st.error(f"{l[0]}  {l[1]}%")
+        for s in l:
+            st.error(f"{s[0]}  {s[1]}%")
 
 # ================= SCREENER =================
 
@@ -146,7 +161,7 @@ with tabs[2]:
         df=load_clean(uploaded)
 
         if df is None:
-            st.error("Invalid Screener file")
+            st.error("Wrong Screener file")
         else:
             years=df.columns[1:]
 
@@ -161,10 +176,10 @@ with tabs[2]:
             growth=((revenue.iloc[-1]/revenue.iloc[0])**(1/len(revenue))-1)*100
 
             c1,c2,c3,c4=st.columns(4)
-            c1.metric("Profit Margin %",round(pm,2))
+            c1.metric("Profit %",round(pm,2))
             c2.metric("ROE %",round(roe,2))
             c3.metric("Debt/Equity",round(de,2))
-            c4.metric("Revenue Growth %",round(growth,2))
+            c4.metric("Growth %",round(growth,2))
 
             st.plotly_chart(px.line(x=years,y=revenue,markers=True,template="plotly_dark",
                                     labels={"x":"Year","y":"Revenue"}),use_container_width=True)
@@ -174,19 +189,18 @@ with tabs[2]:
 
             st.dataframe(df)
 
-    else:
-        st.info("Upload Screener Excel to analyze")
-
 # ================= AI =================
 
 with tabs[3]:
-    st.subheader("🤖 StockGPT – Your AI Market Assistant")
-
-    q=st.text_input("Ask about stock, trend, risk, valuation, future")
+    q=st.text_input("Ask AI about stock health, risk, future, valuation")
 
     if q:
         context=f"""
 Symbol: {symbol}
+"""
+
+        if 'latest' in locals():
+            context+=f"""
 Latest price: {latest:.2f}
 Daily change: {change:.2f}%
 """
@@ -204,4 +218,4 @@ Growth: {growth:.2f}%
 
         st.success(ans)
 
-st.caption("🚀 Professional Stock Analysis Platform with AI")
+st.caption("🚀 Professional AI Powered Stock Platform")
