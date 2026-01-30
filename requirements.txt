@@ -2,5 +2,6 @@ streamlit
 pandas
 plotly
 numpy
+yfinance
 requests
-openai==0.28
+google-generativeai
